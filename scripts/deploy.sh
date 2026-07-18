@@ -6,6 +6,7 @@ set -euo pipefail
 
 STACK_NAME="${STACK_NAME:-docling-batch}"
 MAX_VCPUS="${MAX_VCPUS:-16}"
+JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-14400}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/../cloudformation/template.yaml"
@@ -25,7 +26,7 @@ aws cloudformation deploy \
   --template-file "$TEMPLATE" \
   --stack-name "$STACK_NAME" \
   --capabilities CAPABILITY_IAM \
-  --parameter-overrides ProjectName="$STACK_NAME" MaxvCpus="$MAX_VCPUS"
+  --parameter-overrides ProjectName="$STACK_NAME" MaxvCpus="$MAX_VCPUS" JobTimeoutSeconds="$JOB_TIMEOUT_SECONDS"
 
 echo "==> stack outputs"
 aws cloudformation describe-stacks \

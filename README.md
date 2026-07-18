@@ -103,6 +103,27 @@ scripts/teardown.sh   # empties the S3 bucket, then deletes the stack
   PyPI. If jobs start failing again with `exit code 6` (the GPU self-check
   in `entrypoint.py`) after an AWS AMI update, check the CloudWatch log for
   the driver's reported CUDA version and bump this pin to match.
+- **Enrichment can take much longer than plain OCR — the job timeout is
+  tunable**: `--enrich-code`/`--enrich-formula` route every detected
+  code/formula snippet through `CodeFormulaVlmModel`, a VLM, one batch of 5
+  at a time. On formula-dense documents (e.g. math papers) this can run
+  1–18s *per snippet* and add up to far more than plain OCR. The Batch job
+  timeout (`JobTimeoutSeconds`, default 14400s/4h) kills the job if this
+  runs long — that shows up as `exit code 137` / `"Job attempt duration
+  exceeded timeout"`, not a crash. Raise it via
+  `JOB_TIMEOUT_SECONDS=<seconds> scripts/deploy.sh` if you hit this on a
+  large document; it doesn't cost anything for jobs that finish sooner.
+- **Models are only actually used from the baked-in cache if
+  `DOCLING_ARTIFACTS_PATH` is set**: `docling-tools models download` (build
+  time) writes to `settings.cache_dir / "models"`
+  (`/root/.cache/docling/models`), but every docling model class only reads
+  from there if `DOCLING_ARTIFACTS_PATH` (or `pipeline_options.artifacts_path`)
+  points at it — otherwise each falls back to fetching from its own remote
+  source (HuggingFace Hub for layout/tableformer/code-formula, ModelScope for
+  RapidOCR) on **every job run**, regardless of what was baked into the
+  image. The Dockerfile sets this env var; if it's ever removed, jobs will
+  still work but will silently regain a runtime network dependency and lose
+  a minute or two to redundant fetches on every run.
 - **Cold start**: `MinvCpus: 0` means the first job after idle time pays for
   a fresh instance boot + a multi-GB ECR image pull on top of actual
   conversion time — expect several minutes end-to-end. Back-to-back jobs

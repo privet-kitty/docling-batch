@@ -17,6 +17,18 @@ Parameters:
     Type: Number
     Default: 14
     Description: CloudWatch Logs retention for job output.
+  JobTimeoutSeconds:
+    Type: Number
+    Default: 14400
+    MinValue: 60
+    Description: >-
+      Max seconds a single job may run before AWS Batch kills it (AttemptDurationSeconds).
+      Code/formula enrichment (--enrich-code/--enrich-formula) runs each detected snippet
+      through a VLM and can take much longer than plain OCR on formula-dense documents -
+      raise this if jobs are killed mid-conversion (exit code 137, "Job attempt duration
+      exceeded timeout") rather than failing for an actual bug. A larger value just bounds
+      how long a genuinely stuck job burns GPU-hours before Batch kills it; it does not
+      cost anything for jobs that finish sooner.
 
 Resources:
   ################################
@@ -272,7 +284,7 @@ Resources:
       RetryStrategy:
         Attempts: 1
       Timeout:
-        AttemptDurationSeconds: 3600
+        AttemptDurationSeconds: !Ref JobTimeoutSeconds
 
 Outputs:
   BucketName:

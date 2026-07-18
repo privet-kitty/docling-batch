@@ -38,6 +38,19 @@ RUN pip install --no-cache-dir docling boto3
 ENV HF_HOME=/tmp/ TORCH_HOME=/tmp/ OMP_NUM_THREADS=4
 RUN docling-tools models download
 
+# `docling-tools models download` writes to settings.cache_dir / "models"
+# (~/.cache/docling/models = /root/.cache/docling/models here, since this
+# image runs as root and HF_HOME/TORCH_HOME above do NOT affect this path -
+# cache_dir is a separate docling-specific setting). Setting
+# DOCLING_ARTIFACTS_PATH is load-bearing, not cosmetic: without it, every
+# model class (layout, tableformer, code/formula, RapidOCR) falls back to
+# resolving its weights from its own remote source (HuggingFace Hub /
+# ModelScope) on EVERY job run, regardless of what was baked in above -
+# confirmed by seeing live huggingface.co/modelscope.cn HTTP requests in a
+# real job's CloudWatch logs despite this RUN step having already downloaded
+# everything at build time.
+ENV DOCLING_ARTIFACTS_PATH=/root/.cache/docling/models
+
 COPY entrypoint.py /usr/local/bin/entrypoint.py
 
 ENTRYPOINT ["python3", "/usr/local/bin/entrypoint.py"]
