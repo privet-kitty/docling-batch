@@ -1,0 +1,295 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Docling GPU batch OCR system: a dedicated VPC, ECR repo, S3 transfer bucket,
+  and an AWS Batch (EC2, GPU) queue/compute environment/job definition that runs
+  docling document conversion with GPU acceleration. Scales to zero when idle.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: docling-batch
+    Description: Prefix used for resource names (S3 bucket, ECR repo, Batch resources, etc).
+  MaxvCpus:
+    Type: Number
+    Default: 16
+    Description: Max vCPUs the compute environment may scale to (g4dn.xlarge = 4 vCPUs each).
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch Logs retention for job output.
+
+Resources:
+  ################################
+  # Networking (new minimal VPC, no NAT — instances get public IPs for
+  # outbound-only egress to ECR/S3/CloudWatch Logs via the IGW; the security
+  # group has no inbound rules, which is the actual protection boundary).
+  ################################
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-igw"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.42.0.0/20
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-a"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.42.16.0/20
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-b"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-rt"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  BatchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} Batch compute instances - no inbound, all outbound"
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-batch-sg"
+
+  ################################
+  # IAM (least privilege)
+  ################################
+  BatchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: batch.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  JobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: docling-job-s3-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadInput
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${DataBucket}/input/*"
+              - Sid: WriteOutput
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${DataBucket}/output/*"
+
+  ################################
+  # Observability
+  ################################
+  BatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /docling-batch/jobs
+      RetentionInDays: !Ref LogRetentionDays
+
+  ################################
+  # Storage
+  ################################
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ProjectName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-transfer-objects
+            Status: Enabled
+            Prefix: input/
+            ExpirationInDays: 30
+          - Id: expire-output-objects
+            Status: Enabled
+            Prefix: output/
+            ExpirationInDays: 30
+
+  ################################
+  # AWS Batch
+  ################################
+  ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ServiceRole: !GetAtt BatchServiceRole.Arn
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCpus
+        InstanceTypes:
+          - g4dn.xlarge
+        Subnets:
+          - !Ref PublicSubnetA
+          - !Ref PublicSubnetB
+        SecurityGroupIds:
+          - !Ref BatchSecurityGroup
+        InstanceRole: !GetAtt EC2InstanceProfile.Arn
+        Ec2Configuration:
+          - ImageType: ECS_AL2_NVIDIA
+
+  JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub "${ProjectName}-queue"
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref ComputeEnvironment
+
+  JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: !Sub "${ProjectName}-convert"
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      ContainerProperties:
+        Image: !Sub "${Repository.RepositoryUri}:latest"
+        JobRoleArn: !GetAtt JobRole.Arn
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "4"
+          - Type: MEMORY
+            Value: "14000"
+          - Type: GPU
+            Value: "1"
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref BatchLogGroup
+            awslogs-region: !Ref AWS::Region
+            awslogs-stream-prefix: docling
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+
+Outputs:
+  BucketName:
+    Value: !Ref DataBucket
+  # NOTE: Ref on AWS::Batch::JobQueue/JobDefinition returns the ARN, not the
+  # plain name, so the *Name outputs below intentionally re-derive the literal
+  # name (matching the JobQueueName/JobDefinitionName properties above) rather
+  # than using !Ref.
+  JobQueueName:
+    Value: !Sub "${ProjectName}-queue"
+  JobQueueArn:
+    Value: !Ref JobQueue
+  JobDefinitionName:
+    Value: !Sub "${ProjectName}-convert"
+  JobDefinitionArn:
+    Value: !Ref JobDefinition
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  LogGroupName:
+    Value: !Ref BatchLogGroup
