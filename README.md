@@ -13,7 +13,7 @@ extracted images, if requested) to a local directory.
   input/output transfer, IAM roles, a CloudWatch Logs group, and an AWS Batch
   compute environment / job queue / job definition.
 - AWS Batch (EC2): a managed compute environment using `g4dn.xlarge`
-  (NVIDIA T4) instances, `MinvCpus: 0`, and the `ECS_AL2_NVIDIA`
+  (NVIDIA T4) instances, `MinvCpus: 0`, and the `ECS_AL2023_NVIDIA`
   GPU-optimized AMI.
 - Docker image (`docker/`): docling + a CUDA-enabled torch build, with
   model weights baked in at build time (`docling-tools models download`).

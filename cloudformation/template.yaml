@@ -13,6 +13,19 @@ Parameters:
     Type: Number
     Default: 16
     Description: Max vCPUs the compute environment may scale to (g4dn.xlarge = 4 vCPUs each).
+  InstanceType:
+    Type: String
+    Default: g4dn.xlarge
+    AllowedValues:
+      - g4dn.xlarge
+      - g4dn.2xlarge
+      - g4dn.4xlarge
+    Description: EC2 instance type for the compute environment.
+  JobMemoryMiB:
+    Type: Number
+    Default: 14000
+    MinValue: 1024
+    Description: Memory limit per job, in MiB.
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -238,7 +251,7 @@ Resources:
         MinvCpus: 0
         MaxvCpus: !Ref MaxvCpus
         InstanceTypes:
-          - g4dn.xlarge
+          - !Ref InstanceType
         Subnets:
           - !Ref PublicSubnetA
           - !Ref PublicSubnetB
@@ -246,7 +259,7 @@ Resources:
           - !Ref BatchSecurityGroup
         InstanceRole: !GetAtt EC2InstanceProfile.Arn
         Ec2Configuration:
-          - ImageType: ECS_AL2_NVIDIA
+          - ImageType: ECS_AL2023_NVIDIA
 
   JobQueue:
     Type: AWS::Batch::JobQueue
@@ -272,7 +285,7 @@ Resources:
           - Type: VCPU
             Value: "4"
           - Type: MEMORY
-            Value: "14000"
+            Value: !Ref JobMemoryMiB
           - Type: GPU
             Value: "1"
         LogConfiguration:
