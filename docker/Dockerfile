@@ -3,7 +3,7 @@
 # the CPU-forced torch wheel for a CUDA-enabled one. We don't need an
 # nvidia/cuda base image: the torch wheels bundle their own CUDA runtime
 # libs. The host only needs the NVIDIA driver + nvidia-container-toolkit,
-# both preinstalled on the ECS_AL2_NVIDIA AMI used by the Batch compute
+# both preinstalled on the ECS_AL2023_NVIDIA AMI used by the Batch compute
 # environment, which the ECS agent wires into the container automatically
 # based on the job definition's GPU resourceRequirements.
 FROM python:3.11-slim-bookworm

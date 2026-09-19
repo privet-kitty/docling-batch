@@ -259,7 +259,7 @@ Resources:
           - !Ref BatchSecurityGroup
         InstanceRole: !GetAtt EC2InstanceProfile.Arn
         Ec2Configuration:
-          - ImageType: ECS_AL2_NVIDIA
+          - ImageType: ECS_AL2023_NVIDIA
 
   JobQueue:
     Type: AWS::Batch::JobQueue
