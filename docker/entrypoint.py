@@ -9,11 +9,14 @@ Env in (set per-job by scripts/submit_job.py via containerOverrides.environment)
   ENRICH_CODE      "true"/"false", default "false"
   ENRICH_FORMULA   "true"/"false", default "false"
   IMAGE_EXPORT_MODE "placeholder" | "embedded" | "referenced", default "embedded"
+  IMAGES_SCALE     positive float, default "2.0". Exported images are rendered
+                   at 72 * IMAGES_SCALE DPI
 
 Exit codes: 2 bad env vars, 3 S3 download failure, 4 docling conversion/export
 failure, 5 S3 upload failure, 6 GPU not available, 0 success.
 """
 import logging
+import math
 import os
 import sys
 import tempfile
@@ -49,6 +52,7 @@ def load_config() -> dict:
     input_s3_uri = os.environ.get("INPUT_S3_URI", "").strip()
     output_s3_prefix = os.environ.get("OUTPUT_S3_PREFIX", "").strip()
     image_export_mode = os.environ.get("IMAGE_EXPORT_MODE", "embedded").strip().lower()
+    images_scale_raw = os.environ.get("IMAGES_SCALE", "2.0").strip()
 
     errors = []
     if not input_s3_uri:
@@ -61,6 +65,13 @@ def load_config() -> dict:
         errors.append(
             f"IMAGE_EXPORT_MODE={image_export_mode!r} must be one of {VALID_IMAGE_EXPORT_MODES}"
         )
+    try:
+        images_scale = float(images_scale_raw)
+        if not 0 < images_scale < math.inf:
+            raise ValueError
+    except ValueError:
+        errors.append(f"IMAGES_SCALE={images_scale_raw!r} must be a positive number")
+        images_scale = None
 
     try:
         input_bucket, input_key = parse_s3_uri(input_s3_uri) if input_s3_uri else (None, None)
@@ -87,6 +98,7 @@ def load_config() -> dict:
         "enrich_code": parse_bool(os.environ.get("ENRICH_CODE", "false")),
         "enrich_formula": parse_bool(os.environ.get("ENRICH_FORMULA", "false")),
         "image_export_mode": image_export_mode,
+        "images_scale": images_scale,
     }
 
 
@@ -140,17 +152,20 @@ def convert(local_pdf: Path, out_dir: Path, cfg: dict) -> Path:
         # Required or images silently degrade to placeholders even in
         # referenced mode - a documented docling gotcha. Do not remove.
         pipeline_options.generate_picture_images = True
+        # docling's default of 1.0 renders images at only 72 DPI.
+        pipeline_options.images_scale = cfg["images_scale"]
 
     converter = DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
     )
 
     log.info(
-        "converting %s (enrich_code=%s enrich_formula=%s image_export_mode=%s)",
+        "converting %s (enrich_code=%s enrich_formula=%s image_export_mode=%s images_scale=%s)",
         local_pdf,
         cfg["enrich_code"],
         cfg["enrich_formula"],
         cfg["image_export_mode"],
+        cfg["images_scale"],
     )
     start = time.monotonic()
     try:

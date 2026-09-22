@@ -5,13 +5,14 @@ Usage:
   scripts/submit_job.py my.pdf --output-dir ./out \\
       [--stack-name docling-batch] [--timeout 1800] [--poll-interval 15] \\
       [--enrich-code] [--enrich-formula] \\
-      [--image-export-mode {placeholder,embedded,referenced}]
+      [--image-export-mode {placeholder,embedded,referenced}] [--images-scale 2.0]
 
 With --image-export-mode=referenced, expect two kinds of output locally:
   ./out/<name>.md
   ./out/<name>_artifacts/*.png
 """
 import argparse
+import math
 import sys
 import time
 import uuid
@@ -47,7 +48,16 @@ def parse_args():
         choices=["placeholder", "embedded", "referenced"],
         default="embedded",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--images-scale",
+        type=float,
+        default=2.0,
+        help="exported images are rendered at 72 * this DPI",
+    )
+    args = parser.parse_args()
+    if not 0 < args.images_scale < math.inf:
+        parser.error("--images-scale must be a positive number")
+    return args
 
 
 def submit(batch, s3, outputs, args, job_uuid: str) -> str:
@@ -64,6 +74,7 @@ def submit(batch, s3, outputs, args, job_uuid: str) -> str:
         {"name": "ENRICH_CODE", "value": str(args.enrich_code).lower()},
         {"name": "ENRICH_FORMULA", "value": str(args.enrich_formula).lower()},
         {"name": "IMAGE_EXPORT_MODE", "value": args.image_export_mode},
+        {"name": "IMAGES_SCALE", "value": str(args.images_scale)},
     ]
 
     job_name = f"docling-{job_uuid}"

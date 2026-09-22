@@ -59,6 +59,8 @@ scripts/submit_job.py my.pdf --output-dir ./out \
   inline in the Markdown, default), or `referenced` (images saved as
   separate PNGs in a sibling `<name>_artifacts/` directory, linked by
   relative path from the Markdown).
+- `--images-scale` — scale factor for exported images, which are rendered at
+  72 × this DPI (default 2.0 = 144 DPI).
 - `--stack-name` — defaults to `docling-batch`; override to match `deploy.sh`
   if you deployed under a different name.
 - `--timeout` — seconds to poll before giving up (default 1800s). The Batch
