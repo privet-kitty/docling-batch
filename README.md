@@ -61,6 +61,10 @@ scripts/submit_job.py my.pdf --output-dir ./out \
   relative path from the Markdown).
 - `--images-scale` — scale factor for exported images, which are rendered at
   72 × this DPI (default 2.0 = 144 DPI).
+- `--page-chunk-size` — the PDF is converted this many pages at a time and
+  the chunks are merged into one document (default 100). Peak memory grows
+  with chunk size, not document length, when enrichment or referenced images
+  are on. A paragraph split across a chunk boundary is not rejoined.
 - `--stack-name` — defaults to `docling-batch`; override to match `deploy.sh`
   if you deployed under a different name.
 - `--timeout` — seconds to poll before giving up (default 1800s). The Batch
@@ -85,6 +89,10 @@ scripts/teardown.sh   # empties the S3 bucket, then deletes the stack
   duration well past plain OCR. If a job hits the Batch timeout
   (`exit code 137`), raise it via
   `JOB_TIMEOUT_SECONDS=<seconds> scripts/deploy.sh` (default 14400s/4h).
+- **Out of memory**: exit code 137 with `OutOfMemoryError: Container killed
+  due to memory usage` means a page chunk didn't fit in `JOB_MEMORY_MIB`.
+  Lower `--page-chunk-size`, or raise `INSTANCE_TYPE`/`JOB_MEMORY_MIB` via
+  `deploy.sh`.
 - **`DOCLING_ARTIFACTS_PATH`** must stay set (already set in the Dockerfile)
   for models to load from the baked-in cache instead of fetching remotely on
   every job run.

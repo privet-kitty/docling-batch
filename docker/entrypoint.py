@@ -11,10 +11,14 @@ Env in (set per-job by scripts/submit_job.py via containerOverrides.environment)
   IMAGE_EXPORT_MODE "placeholder" | "embedded" | "referenced", default "embedded"
   IMAGES_SCALE     positive float, default "2.0". Exported images are rendered
                    at 72 * IMAGES_SCALE DPI
+  PAGE_CHUNK_SIZE  positive int, default "100". The PDF is converted this many
+                   pages at a time and the chunks are merged into one document
 
 Exit codes: 2 bad env vars, 3 S3 download failure, 4 docling conversion/export
 failure, 5 S3 upload failure, 6 GPU not available, 0 success.
 """
+import ctypes
+import gc
 import logging
 import math
 import os
@@ -53,6 +57,7 @@ def load_config() -> dict:
     output_s3_prefix = os.environ.get("OUTPUT_S3_PREFIX", "").strip()
     image_export_mode = os.environ.get("IMAGE_EXPORT_MODE", "embedded").strip().lower()
     images_scale_raw = os.environ.get("IMAGES_SCALE", "2.0").strip()
+    page_chunk_size_raw = os.environ.get("PAGE_CHUNK_SIZE", "100").strip()
 
     errors = []
     if not input_s3_uri:
@@ -72,6 +77,13 @@ def load_config() -> dict:
     except ValueError:
         errors.append(f"IMAGES_SCALE={images_scale_raw!r} must be a positive number")
         images_scale = None
+    try:
+        page_chunk_size = int(page_chunk_size_raw)
+        if page_chunk_size < 1:
+            raise ValueError
+    except ValueError:
+        errors.append(f"PAGE_CHUNK_SIZE={page_chunk_size_raw!r} must be a positive integer")
+        page_chunk_size = None
 
     try:
         input_bucket, input_key = parse_s3_uri(input_s3_uri) if input_s3_uri else (None, None)
@@ -99,6 +111,7 @@ def load_config() -> dict:
         "enrich_formula": parse_bool(os.environ.get("ENRICH_FORMULA", "false")),
         "image_export_mode": image_export_mode,
         "images_scale": images_scale,
+        "page_chunk_size": page_chunk_size,
     }
 
 
@@ -125,11 +138,12 @@ def download_input(s3, bucket: str, key: str, work_dir: Path) -> Path:
 
 
 def convert(local_pdf: Path, out_dir: Path, cfg: dict) -> Path:
+    import pypdfium2
     from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
-    from docling_core.types.doc import ImageRefMode
+    from docling_core.types.doc import DoclingDocument, ImageRefMode
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = True
@@ -160,16 +174,45 @@ def convert(local_pdf: Path, out_dir: Path, cfg: dict) -> Path:
     )
 
     log.info(
-        "converting %s (enrich_code=%s enrich_formula=%s image_export_mode=%s images_scale=%s)",
+        "converting %s (enrich_code=%s enrich_formula=%s image_export_mode=%s images_scale=%s"
+        " page_chunk_size=%s)",
         local_pdf,
         cfg["enrich_code"],
         cfg["enrich_formula"],
         cfg["image_export_mode"],
         cfg["images_scale"],
+        cfg["page_chunk_size"],
     )
     start = time.monotonic()
     try:
-        result = converter.convert(str(local_pdf))
+        pdf = pypdfium2.PdfDocument(local_pdf)
+        try:
+            page_count = len(pdf)
+        finally:
+            pdf.close()
+        # Convert in page-range chunks rather than in one go: docling keeps
+        # every page's parser result alive until the end of a conversion
+        # when code/formula enrichment is on (and every page image when
+        # picture images are generated), so peak memory grows with page count.
+        # A 719-page scanned book OOM-killed a 14000 MiB job this way
+        # (measured ~34 MB retained per page). Only each chunk's
+        # DoclingDocument is kept; DoclingDocument.concatenate preserves the
+        # original page numbers since the chunks are contiguous.
+        chunk = cfg["page_chunk_size"]
+        libc = ctypes.CDLL("libc.so.6")
+        docs = []
+        for first in range(1, page_count + 1, chunk):
+            last = min(first + chunk - 1, page_count)
+            log.info("converting pages %d-%d of %d", first, last, page_count)
+            docs.append(converter.convert(str(local_pdf), page_range=(first, last)).document)
+            # Both calls are load-bearing; without them peak RSS still climbs
+            # chunk after chunk (measured). The finished chunk's pages sit in
+            # reference cycles until the cyclic GC happens to run, and glibc
+            # keeps their freed heap in per-thread arenas (docling starts fresh
+            # pipeline threads on every convert) instead of reusing it.
+            gc.collect()
+            libc.malloc_trim(0)
+        document = docs[0] if len(docs) == 1 else DoclingDocument.concatenate(docs)
         stem = local_pdf.stem
         md_path = out_dir / f"{stem}.md"
         # save_as_markdown, not export_to_markdown: export_to_markdown has a
@@ -187,7 +230,7 @@ def convert(local_pdf: Path, out_dir: Path, cfg: dict) -> Path:
         cwd_before = os.getcwd()
         os.chdir(out_dir)
         try:
-            result.document.save_as_markdown(
+            document.save_as_markdown(
                 Path(f"{stem}.md"), image_mode=ImageRefMode(cfg["image_export_mode"])
             )
         finally:

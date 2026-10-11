@@ -5,7 +5,8 @@ Usage:
   scripts/submit_job.py my.pdf --output-dir ./out \\
       [--stack-name docling-batch] [--timeout 1800] [--poll-interval 15] \\
       [--enrich-code] [--enrich-formula] \\
-      [--image-export-mode {placeholder,embedded,referenced}] [--images-scale 2.0]
+      [--image-export-mode {placeholder,embedded,referenced}] [--images-scale 2.0] \\
+      [--page-chunk-size 100]
 
 With --image-export-mode=referenced, expect two kinds of output locally:
   ./out/<name>.md
@@ -54,9 +55,17 @@ def parse_args():
         default=2.0,
         help="exported images are rendered at 72 * this DPI",
     )
+    parser.add_argument(
+        "--page-chunk-size",
+        type=int,
+        default=100,
+        help="pages converted at a time; the chunks are merged into one document",
+    )
     args = parser.parse_args()
     if not 0 < args.images_scale < math.inf:
         parser.error("--images-scale must be a positive number")
+    if args.page_chunk_size < 1:
+        parser.error("--page-chunk-size must be a positive integer")
     return args
 
 
@@ -75,6 +84,7 @@ def submit(batch, s3, outputs, args, job_uuid: str) -> str:
         {"name": "ENRICH_FORMULA", "value": str(args.enrich_formula).lower()},
         {"name": "IMAGE_EXPORT_MODE", "value": args.image_export_mode},
         {"name": "IMAGES_SCALE", "value": str(args.images_scale)},
+        {"name": "PAGE_CHUNK_SIZE", "value": str(args.page_chunk_size)},
     ]
 
     job_name = f"docling-{job_uuid}"
