@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir \
       "torch==2.6.0+cu124" "torchvision==0.21.0+cu124" \
       --index-url https://download.pytorch.org/whl/cu124
 
-RUN pip install --no-cache-dir docling boto3
+RUN pip install --no-cache-dir "docling==2.148.0" boto3
 
 # Bake model weights into the image at build time (docling's own recommended
 # pattern) so the running job never needs a runtime HuggingFace download.
