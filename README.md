@@ -60,14 +60,14 @@ scripts/submit_job.py my.pdf --output-dir ./out \
   separate PNGs in a sibling `<name>_artifacts/` directory, linked by
   relative path from the Markdown).
 - `--images-scale` — scale factor for exported images, which are rendered at
-  72 × this DPI (default 2.0 = 144 DPI).
+  72 × this DPI.
 - `--page-chunk-size` — the PDF is converted this many pages at a time and
-  the chunks are merged into one document (default 100). Peak memory grows
+  the chunks are merged into one document. Peak memory grows
   with chunk size, not document length, when enrichment or referenced images
   are on. A paragraph split across a chunk boundary is not rejoined.
 - `--stack-name` — defaults to `docling-batch`; override to match `deploy.sh`
   if you deployed under a different name.
-- `--timeout` — seconds to poll before giving up (default 1800s). The Batch
+- `--timeout` — seconds to poll before giving up. The Batch
   job itself is not cancelled; the script just stops watching it. After timeout,
   you will need to manually retrieve the results from S3.
 

@@ -3,7 +3,7 @@
 
 Usage:
   scripts/submit_job.py my.pdf --output-dir ./out \\
-      [--stack-name docling-batch] [--timeout 1800] [--poll-interval 15] \\
+      [--stack-name docling-batch] [--timeout 7200] [--poll-interval 15] \\
       [--enrich-code] [--enrich-formula] \\
       [--image-export-mode {placeholder,embedded,referenced}] [--images-scale 2.0] \\
       [--page-chunk-size 100]
@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument(
         "--timeout",
         type=int,
-        default=1800,
+        default=7200,
         help="seconds to poll before giving up (the job itself keeps running)",
     )
     parser.add_argument("--poll-interval", type=int, default=15)
